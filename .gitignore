@@ -1,3 +1,8 @@
 credentials.json
 token.json
 venv/
+blacklist.py
+__pycache__/
+*.pyc
+.DS_Store
+.env
