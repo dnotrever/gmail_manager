@@ -5,7 +5,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-from blacklist import black_list
+from lists import black_list, attachments
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
@@ -103,11 +103,14 @@ def list_messages(service, max_results=50):
             'body': get_email_body(full),
             'snippet': full.get('snippet'),
             'labels': full.get('labelIds', []),
+            'payload': full.get('payload'),
         }
 
         messages.append(email_data)
 
     return messages
+
+# Delete emails matching blacklisted criteria
 
 def delete_email(service, message):
 
@@ -117,9 +120,9 @@ def delete_email(service, message):
 
     try:
         service.users().messages().trash(userId='me', id=message['id']).execute()
-        print(f"Deleted email: {infos}")
+        print(f"Deleted email:\n{infos}")
     except Exception as err:
-        print(f"Failed to delete email: {infos}")
+        print(f"Failed to delete email:\n{infos}")
         print(err)
 
 def delete_blacklisted_emails(service):
@@ -128,12 +131,87 @@ def delete_blacklisted_emails(service):
 
     for msg in messages:
 
-        _subject = msg['subject'] or ''
-        _from = msg['from'] or ''
+        _subject = (msg['subject'] or '').lower()
+        _from = (msg['from'] or '').lower()
 
         if any(black_item in _subject for black_item in black_list) or any(black_item in _from for black_item in black_list):
             delete_email(service, msg)
-            
+
+# Download attachments from emails matching specified rules
+
+def download_attachments(service, message, filename_prefix):
+
+    download_dir = os.path.expanduser('~/Downloads')
+    os.makedirs(download_dir, exist_ok=True)
+
+    def walk_parts(parts):
+
+        for part in parts:
+
+            filename = part.get('filename')
+            body = part.get('body', {})
+            attachment_id = body.get('attachmentId')
+
+            if filename and attachment_id:
+
+                ext = os.path.splitext(filename)[1] or '.bin'
+                final_name = f"{filename_prefix}{ext}"
+                filepath = os.path.join(download_dir, final_name)
+                
+                att = service.users().messages().attachments().get(
+                    userId='me',
+                    messageId=message['id'],
+                    id=attachment_id
+                ).execute()
+
+                data = base64.urlsafe_b64decode(att['data'])
+
+                with open(filepath, 'wb') as f:
+                    f.write(data)
+
+            if 'parts' in part:
+                walk_parts(part['parts'])
+
+        print('')
+
+        infos = f"{message['id']} | {message['from']} | {message['subject']} | {filename}"
+        
+        print(f"Downloaded attachment:\n{infos}")
+
+    payload = message.get('payload', {})
+    parts = payload.get('parts', [])
+
+    walk_parts(parts)
+
+def download_attachments_emails(service, attachment_rules):
+
+    rules = parse_attachment_rules(attachment_rules)
+    messages = list_messages(service)
+
+    for msg in messages:
+        subject = (msg.get('subject') or '').lower()
+
+        for rule in rules:
+            if rule['subject'] in subject:
+                download_attachments(
+                    service,
+                    msg,
+                    filename_prefix=rule['filename']
+                )
+
+def parse_attachment_rules(rules):
+
+    parsed = []
+
+    for item in rules:
+        subject_part, filename_part = item.split('|', 1)
+        parsed.append({
+            'subject': subject_part.strip().lower(),
+            'filename': filename_part.strip()
+        })
+
+    return parsed
+
 
 #=============================================================================================================
 # Main Execution
@@ -143,12 +221,22 @@ if __name__ == '__main__':
 
     service = authenticate_gmail()
 
+    # ========================================================================================================
+
     # results = list_messages(service, max_results=5)
 
     # for msg in results:
     #     print(f"{msg['id']} | {msg['from']} | {msg['subject']}")
 
-    delete_blacklisted_emails(service)
+    # ========================================================================================================
+
+    # delete_blacklisted_emails(service)
+
+    # ========================================================================================================
+
+    download_attachments_emails(service, attachments)
+
+    # ========================================================================================================
 
     print('')
 

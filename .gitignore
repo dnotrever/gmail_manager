@@ -1,7 +1,7 @@
 credentials.json
 token.json
 venv/
-blacklist.py
+lists.py
 __pycache__/
 *.pyc
 .DS_Store
